@@ -9,6 +9,16 @@ from tqdm import tqdm
 import utils
 from model import Model
 
+parser = argparse.ArgumentParser(description='Linear Evaluation')
+parser.add_argument('--model_path', type=str, default=None,
+                    help='The pretrained model path')
+parser.add_argument('--batch_size', type=int, default=1000, help='Number of images in each mini-batch')
+parser.add_argument('--epochs', type=int, default=100, help='Number of sweeps over the dataset to train')
+parser.add_argument('--optimizer', default='sgd', type=str, help='Optimizer to use')
+parser.add_argument('--lr', default=1.0, type=float, help='Learning rate')
+parser.add_argument('--weight_decay', default=0.0, type=float)
+parser.add_argument('--feature_dim', default=128, type=int, help='Feature dim for latent vector')
+
 
 class Net(nn.Module):
     def __init__(self, num_class, pretrained_path):
@@ -66,16 +76,6 @@ def train_val(net, data_loader, train_optimizer, scheduler):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Linear Evaluation')
-    parser.add_argument('--model_path', type=str, default=None,
-                        help='The pretrained model path')
-    parser.add_argument('--batch_size', type=int, default=1000, help='Number of images in each mini-batch')
-    parser.add_argument('--epochs', type=int, default=100, help='Number of sweeps over the dataset to train')
-    parser.add_argument('--optimizer', default='sgd', type=str, help='Optimizer to use')
-    parser.add_argument('--lr', default=1.0, type=float, help='Learning rate')
-    parser.add_argument('--weight_decay', default=0.0, type=float)
-    parser.add_argument('--feature_dim', default=128, type=int, help='Feature dim for latent vector')
-
     args = parser.parse_args()
     assert args.model_path is not None
     model_path, batch_size, epochs = args.model_path, args.batch_size, args.epochs

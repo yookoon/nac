@@ -5,18 +5,23 @@ import torch.nn.functional as F
 from torchvision import transforms
 from torchvision.datasets import CIFAR10
 
+train_transform = transforms.Compose([
+    transforms.RandomResizedCrop(32),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
+    transforms.RandomGrayscale(p=0.2),
+    transforms.ToTensor(),
+    transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])])
 
-def mrelu(x, dim=1):
-    return torch.cat((F.relu(x), F.relu(-x)), dim=dim)
+linear_train_transform = transforms.Compose([
+    transforms.RandomResizedCrop(32),
+    transforms.RandomHorizontalFlip(p=0.5),
+    transforms.ToTensor(),
+    transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])])
 
-
-class MReLU(nn.Module):
-    def __init__(self, dim=1):
-        super(MReLU, self).__init__()
-        self.dim = dim
-
-    def forward(self, x):
-        return torch.cat((F.relu(x), F.relu(-x)), dim=self.dim)
+test_transform = transforms.Compose([
+    transforms.ToTensor(),
+    transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])])
 
 
 class CIFAR10Pair(CIFAR10):
@@ -36,21 +41,23 @@ class CIFAR10Pair(CIFAR10):
 
         return pos_1, pos_2, target
 
+def _momentum_update_key_encoder(model, model_k, m):
+    """
+    Momentum update of the key encoder
+    """
+    for param_q, param_k in zip(model.parameters(), model_k.parameters()):
+        param_k.data = param_k.data * m + param_q.data * (1. - m)
 
-train_transform = transforms.Compose([
-    transforms.RandomResizedCrop(32),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.RandomApply([transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8),
-    transforms.RandomGrayscale(p=0.2),
-    transforms.ToTensor(),
-    transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])])
+@torch.no_grad()
+def _dequeue_and_enqueue(queue, queue_ptr, keys, K):
+    batch_size = keys.shape[0]
 
-linear_train_transform = transforms.Compose([
-    transforms.RandomResizedCrop(32),
-    transforms.RandomHorizontalFlip(p=0.5),
-    transforms.ToTensor(),
-    transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])])
+    ptr = int(queue_ptr)
+    assert K % batch_size == 0  # for simplicity
 
-test_transform = transforms.Compose([
-    transforms.ToTensor(),
-    transforms.Normalize([0.4914, 0.4822, 0.4465], [0.2023, 0.1994, 0.2010])])
+    # replace the keys at ptr (dequeue and enqueue)
+    queue[:, ptr:ptr + batch_size] = keys.T
+    ptr = (ptr + batch_size) % K  # move pointer
+
+    queue_ptr[0] = ptr
+

@@ -67,7 +67,6 @@ if __name__ == "__main__":
     n_query = args.n_query
     pprint(vars(args))
 
-
     # data prepare
     print("Preparing data...")
     if args.use_default_train:

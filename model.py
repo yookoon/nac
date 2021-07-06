@@ -3,23 +3,27 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.models.resnet import resnet50
-import network
-
+from torchvision.models import vgg16_bn
 
 class Model(nn.Module):
-    def __init__(self, feature_dim=128, VI=False):
+    def __init__(self, feature_dim=128, VI=False, architecture='resnet50'):
         super(Model, self).__init__()
 
         # Modify the first conv layer according to SimCLR architecture
-        f = []
-        for name, module in resnet50().named_children():
-            if name == 'conv1':
-                module = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
-            if not isinstance(module, nn.Linear) and not isinstance(module, nn.MaxPool2d):
-                f.append(module)
-        # encoder
-        self.encoder = nn.Sequential(*f)
-        out_dim = 2048
+        if architecture == 'resnet50':
+            f = []
+            for name, module in resnet50().named_children():
+                if name == 'conv1':
+                    module = nn.Conv2d(3, 64, kernel_size=3, stride=1, padding=1, bias=False)
+                if not isinstance(module, nn.Linear) and not isinstance(module, nn.MaxPool2d):
+                    f.append(module)
+            # encoder
+            self.encoder = nn.Sequential(*f)
+            out_dim = 2048
+        elif architecture == 'vgg16':
+            self.encoder = vgg16_bn()
+            out_dim = 512
+
         self.out_dim = out_dim
 
         self.head = nn.Sequential(nn.Linear(out_dim, out_dim, bias=True),

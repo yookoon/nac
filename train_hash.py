@@ -2,25 +2,57 @@ import argparse
 import os
 from datetime import datetime
 import math
-
-import fire
 import numpy as np
 from pprint import pprint
-import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-from thop import profile, clever_format
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
-
 import utils
 from model import Model
 from lars import LARS
 import hash_utils
 from hash import code_predict
+from main import train
+
+parser = argparse.ArgumentParser(description='Train SimCLR')
+parser.add_argument('--image_size', default=224, type=int, help='Image size')
+parser.add_argument('--optimizer', default='lars', type=str, help='Optimizer to use')
+parser.add_argument('--lr', default=3.0, type=float, help='Learning rate')
+parser.add_argument('--lr_warmup', default=10, type=int)
+parser.add_argument('--feature_dim', default=128, type=int, help='Feature dim for latent vector')
+parser.add_argument('--temperature', default=0.5, type=float, help='Temperature used in softmax')
+parser.add_argument('--k', default=200, type=int, help='Top k most similar images used to predict the label')
+parser.add_argument('--batch_size', default=1000, type=int, help='Number of images in each mini-batch')
+parser.add_argument('--epochs', default=1000, type=int, help='Number of sweeps over the dataset to train')
+parser.add_argument('--architecture', type=str, default='resnet50')
+parser.add_argument('--objective', type=str, default='nac')
+parser.add_argument('--use_mrelu', action='store_true', default=False)
+parser.add_argument('--weight_decay', default=1e-6, type=float)
+parser.add_argument('--dropout', default=0.1, type=float)
+parser.add_argument('--l2_weight', default=1.0, type=float)
+parser.add_argument('--l2_warmup', default=0, type=int)
+parser.add_argument('--exclude_bias_decay', action='store_true', default=False)
+parser.add_argument('--exclude_bn_decay', action='store_true', default=False)
+parser.add_argument('--nac_temperature', action='store_true', default=False)
+parser.add_argument('--no_proj_bn', action='store_true', default=False)
+parser.add_argument('--VI', action='store_true', default=False)
+parser.add_argument('--ent_weight', default=0.0, type=float)
+parser.add_argument('--share_head', action='store_true', default=False)
+parser.add_argument('--use_last_output', action='store_true', default=False)
+parser.add_argument('--moco', action='store_true', default=False)
+parser.add_argument('--symmetric', action='store_true', default=False)
+parser.add_argument('--K', default=5000, type=int)
+parser.add_argument('--m', default=0.99, type=float)
+parser.add_argument('--normalize_moco', action='store_true', default=False)
+parser.add_argument('--l2_normalize', action='store_true', default=False)
+parser.add_argument('--l2_threshold', default=0.0, type=float)
+parser.add_argument('--seed', default=0, type=int, help='seed for random variable')
+parser.add_argument('--n_query', default=10000, type=int, help='total number of queries to use')
+parser.add_argument('--finetune', default=None, type=float)
 
 
 def _momentum_update_key_encoder(model, model_k):
@@ -353,44 +385,6 @@ def train_moco(net, net_k, queue, queue_ptr, data_loader, optimizers,
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Train SimCLR')
-    parser.add_argument('--dataset', default='cifar', type=str, help='Datasets')
-    parser.add_argument('--image_size', default=224, type=int, help='Image size')
-    parser.add_argument('--optimizer', default='lars', type=str, help='Optimizer to use')
-    parser.add_argument('--lr', default=3.0, type=float, help='Learning rate')
-    parser.add_argument('--lr_warmup', default=10, type=int)
-    parser.add_argument('--feature_dim', default=128, type=int, help='Feature dim for latent vector')
-    parser.add_argument('--temperature', default=0.5, type=float, help='Temperature used in softmax')
-    parser.add_argument('--k', default=200, type=int, help='Top k most similar images used to predict the label')
-    parser.add_argument('--batch_size', default=1000, type=int, help='Number of images in each mini-batch')
-    parser.add_argument('--epochs', default=1000, type=int, help='Number of sweeps over the dataset to train')
-    parser.add_argument('--architecture', type=str, default='resnet50')
-    parser.add_argument('--objective', type=str, default='nac')
-    parser.add_argument('--use_mrelu', action='store_true', default=False)
-    parser.add_argument('--weight_decay', default=1e-6, type=float)
-    parser.add_argument('--dropout', default=0.1, type=float)
-    parser.add_argument('--l2_weight', default=1.0, type=float)
-    parser.add_argument('--l2_warmup', default=0, type=int)
-    parser.add_argument('--exclude_bias_decay', action='store_true', default=False)
-    parser.add_argument('--exclude_bn_decay', action='store_true', default=False)
-    parser.add_argument('--nac_temperature', action='store_true', default=False)
-    parser.add_argument('--no_proj_bn', action='store_true', default=False)
-    parser.add_argument('--VI', action='store_true', default=False)
-    parser.add_argument('--ent_weight', default=0.0, type=float)
-    parser.add_argument('--share_head', action='store_true', default=False)
-    parser.add_argument('--use_last_output', action='store_true', default=False)
-    parser.add_argument('--moco', action='store_true', default=False)
-    parser.add_argument('--symmetric', action='store_true', default=False)
-    parser.add_argument('--K', default=5000, type=int)
-    parser.add_argument('--m', default=0.99, type=float)
-    parser.add_argument('--normalize_moco', action='store_true', default=False)
-    parser.add_argument('--l2_normalize', action='store_true', default=False)
-    parser.add_argument('--l2_threshold', default=0.0, type=float)
-    parser.add_argument('--note', type=str, default=None)
-    parser.add_argument('--seed', default=0, type=int, help='seed for random variable')
-    parser.add_argument('--n_query', default=10000, type=int, help='total number of queries to use')
-    parser.add_argument('--finetune', default=None, type=float)
-
     # args parse
     args = parser.parse_args()
     feature_dim, temperature, k = args.feature_dim, args.temperature, args.k
@@ -400,7 +394,7 @@ if __name__ == "__main__":
     timestamp = datetime.now().strftime('%m-%d-%H:%M:%S')
     if args.objective == 'simclr':
         _args = [f'{key}={value}' for key, value in vars(args).items()
-                        if key in ['dataset', 'objective', 'batch_size', 'lr', 'lr_warmup']]
+                        if key in ['objective', 'batch_size', 'lr', 'lr_warmup']]
     else:
         _args = [f'{key}={value}' for key, value in vars(args).items()
                  if key in ['feature_dim', 'architecture', 'image_size', 'objective', 'batch_size', 'lr', 'lr_warmup', 'l2_weight', 'dropout', 'optimizer', 'finetune']]
@@ -411,12 +405,7 @@ if __name__ == "__main__":
                              'moco', 'symmetric', 'normalize_moco', 'l2_normalize'] and value])
     if args.moco:
         _args.append(f'K={args.K}.m={args.m}')
-    if args.note is not None:
-        _args.append(args.note)
-    _args.insert(0, f'hash')
-
-    exp_name = '.'.join((timestamp, *_args))
-    save_dir = os.path.join(args.dataset, exp_name)
+    save_dir = '.'.join(('hash', timestamp, *_args))
 
     # data prepare
     if args.dataset == 'cifar':
@@ -431,37 +420,11 @@ if __name__ == "__main__":
         image_size = 32
         c = num_classes = 10
         multi_label = False
-    elif args.dataset == 'flickr':
-        train_data, query, gallery = hash_utils.get_flickr25kpair_datasets('/dataset_ssd_rubens/sangho.lee/mirflickr', '/dataset_ssd_rubens/sangho.lee/mirflickr25k_annotations_v080', args.image_size, 2000, 5000)
-        n_gallery = len(gallery)
-        query_loader = DataLoader(query, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
-        gallery_loader = DataLoader(gallery, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
-        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True,
-                                  drop_last=True)
-        R = n_gallery
-        image_size = 224
-        c = num_classes = 24
-        multi_label = True
-    elif args.dataset == 'nuswide':
-        train_data, query, gallery = hash_utils.get_nuswidepair_datasets('/dataset_ssd_rubens/sangho.lee/nus_wide', '/dataset_ssd_rubens/sangho.lee/nus_wide_metas', args.image_size, 5000, 10500)
-        n_gallery = len(gallery)
-        query_loader = DataLoader(query, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
-        gallery_loader = DataLoader(gallery, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
-        train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True,
-                                  drop_last=True)
-        R = n_gallery
-        image_size = 224
-        c = num_classes = 10
-        multi_label = True
 
     # model setup and optimizer config
-    model = Model(args.architecture, image_size, args.use_mrelu, feature_dim=feature_dim,
-                  VI=args.VI, no_proj_bn=args.no_proj_bn, share_head=args.share_head,
-                  use_last_output=args.use_last_output, pretrained=args.pretrained).cuda()
+    model = Model(feature_dim=feature_dim, architecture='vgg16').cuda()
     if args.moco:
-        model_k = Model(args.architecture, 32, args.use_mrelu, feature_dim=feature_dim,
-                        VI=args.VI, no_proj_bn=args.no_proj_bn, share_head=args.share_head,
-                        use_last_output=args.use_last_output).cuda()
+        model_k = Model(feature_dim=feature_dim, architecture='vgg16').cuda()
         for param_q, param_k in zip(model.parameters(), model_k.parameters()):
             param_k.data.copy_(param_q.data)  # initialize
             param_k.requires_grad = False  # not update by gradient
@@ -572,11 +535,7 @@ if __name__ == "__main__":
     writer.add_scalar('hashing/map', mAP, 0)
 
     for epoch in range(1, epochs + 1):
-        if args.moco:
-            train_loss = train_moco(model, model_k, queue, queue_ptr,
-                                    train_loader, optimizers, temperature, objective, dropout, schedulers)
-        else:
-            train_loss = train(model, train_loader, optimizers, temperature, objective, dropout, schedulers)
+        train_loss = train(model, train_loader, optimizers, temperature, objective, dropout, schedulers)
         writer.add_scalar('pretraining/train_loss', train_loss, epoch)
         if epoch == epochs or epoch % 100 == 0:
             m = model.module if torch.cuda.device_count() > 1 else model
@@ -595,6 +554,3 @@ if __name__ == "__main__":
             writer.add_scalar('hashing/map', mAP, epoch)
 
     writer.flush()
-
-# if __name__ == "__main__":
-#     fire.Fire(run)
