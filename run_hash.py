@@ -4,16 +4,16 @@ from datetime import datetime
 import math
 from pprint import pprint
 import numpy as np
-from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from utils import train_transform, linear_train_transform, test_transform, CIFAR10, CIFAR10Pair
 from model import Model
 from lars import LARS
+import hash_utils
+from hash import code_predict
 from train import train, train_moco_symmetric
 
 parser = argparse.ArgumentParser(description='Neural Activation Coding')
@@ -30,75 +30,13 @@ parser.add_argument('--flip', default=0.1, type=float, help='Flip probability in
 parser.add_argument('--exclude_bias_from_decay_params', action='store_true', default=False)
 parser.add_argument('--exclude_bn_from_decay_params', action='store_true', default=False)
 parser.add_argument('--moco', action='store_true', help='Whether to use momentum queue')
-parser.add_argument('--K', default=50000, type=int, help='Size of momentum queue')
+parser.add_argument('--K', default=5000, type=int, help='Size of momentum queue')
 parser.add_argument('--m', default=0.99, type=float, help='Momentum queue decay')
 parser.add_argument('--l2_weight', default=0.1, type=float, help='L2 regularization on the features')
 
 
-def linear_eval(network, feature_dim, num_classes, trainloader, testloader, use_sgd, lr, epochs, batch_size):
-    linear = nn.Linear(feature_dim, num_classes)
-    device = torch.cuda.current_device()
-    network.eval()
-    linear = linear.cuda(device=device)
-    if use_sgd:
-        optimizer = optim.SGD(linear.parameters(), lr=lr, momentum=0.9,
-                              weight_decay=0.0, nesterov=True)
-        num_steps_per_epoch = 50000 // batch_size
-        total_steps = num_steps_per_epoch * epochs
-        def lr_schedule(step):
-            # Cosine learning rate schedule without restart
-            factor = 0.5 * (1 + math.cos(math.pi * step / total_steps))
-            return factor
-        scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_schedule)
-    else:
-        optimizer = optim.Adam(linear.parameters(), lr=lr, weight_decay=0.0)
-        scheduler = None
-    criterion = torch.nn.CrossEntropyLoss()
-    epoch_bar = tqdm(range(1, epochs + 1))
-    for epoch in epoch_bar:
-        train_loss = 0
-        train_correct = 0
-        train_total = 0
-        linear.train()
-        for images, labels in trainloader:
-            images, labels = images.cuda(device, non_blocking=True), labels.cuda(device, non_blocking=True)
-            with torch.no_grad():
-                feature, out, logit = network(images)
-            outputs = linear(feature)
-            loss = criterion(outputs, labels)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            if scheduler is not None:
-                scheduler.step()
-
-            train_loss += loss.item()
-            _, predicted = outputs.max(1)
-            train_total += labels.size(0)
-            train_correct += predicted.eq(labels).sum().item()
-
-        train_accuracy = 100. * train_correct / train_total
-
-    test_loss = 0
-    test_correct = 0
-    test_total = 0
-    linear.eval()
-    with torch.no_grad():
-        for images, labels in testloader:
-            images, labels = images.to(device), labels.to(device)
-            feature, out, logit = network(images)
-            outputs = linear(feature)
-            loss = criterion(outputs, labels)
-            test_loss += loss.item()
-            _, predicted = outputs.max(1)
-            test_total += labels.size(0)
-            test_correct += predicted.eq(labels).sum().item()
-    test_accuracy = 100. * test_correct / test_total
-
-    return train_accuracy, test_accuracy
-
-
 if __name__ == "__main__":
+    # args parse
     args = parser.parse_args()
     feature_dim, temperature = args.feature_dim, args.temperature
     batch_size, epochs = args.batch_size, args.epochs
@@ -118,28 +56,24 @@ if __name__ == "__main__":
                   if key in ['exclude_bias_from_decay_params', 'exclude_bn_from_decay_paramsecay', 'moco'] and value])
     if moco:
         _args.append(f'K={K}.m={m}')
-
-    exp_name = '.'.join((timestamp, *_args))
-    save_dir = os.path.join('cifar', exp_name)
+    if moco:
+        _args.append(f'K={K}.m={m}')
+    save_dir = '.'.join(('hash', timestamp, *_args))
 
     # data prepare
-    train_data = CIFAR10Pair(root='data', train=True,
-                                   transform=train_transform,
-                                   download=True)
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True,
-                              drop_last=True)
-    memory_data = CIFAR10(root='data', train=True, transform=test_transform, download=True)
-    memory_loader = DataLoader(memory_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
-
-    train_data = CIFAR10(root='data', train=True, transform=linear_train_transform, download=True)
-    linear_train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True)
-    test_data = CIFAR10(root='data', train=False, transform=test_transform, download=True)
-    linear_test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+    train_data, query, gallery = hash_utils.get_cifar10pair_datasets('data', 10000, use_subset=True)
+    print(len(train_data), len(query), len(gallery))
+    n_gallery = len(gallery)
+    query_loader = DataLoader(query, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+    gallery_loader = DataLoader(gallery, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True, drop_last=True)
+    R = n_gallery
+    num_classes = 10
 
     # model setup and optimizer config
-    model = Model(feature_dim=feature_dim, VI=VI).cuda()
+    model = Model(feature_dim=feature_dim, VI=VI, architecture='vgg16').cuda()
     if moco:
-        model_k = Model(feature_dim=feature_dim, VI=VI).cuda()
+        model_k = Model(feature_dim=feature_dim, VI=VI, architecture='vgg16').cuda()
         for param_q, param_k in zip(model.parameters(), model_k.parameters()):
             param_k.data.copy_(param_q.data)  # initialize
             param_k.requires_grad = False  # not update by gradient
@@ -149,8 +83,7 @@ if __name__ == "__main__":
             queue = F.normalize(queue, dim=0)
         queue_ptr = torch.zeros(1, dtype=torch.long).cuda()
 
-    num_classes = len(train_data.classes)
-    linear_dim = model.out_dim
+    # training loop
     model = nn.DataParallel(model)
     if moco:
         model_k = nn.DataParallel(model_k)
@@ -164,13 +97,13 @@ if __name__ == "__main__":
         elif optimizer == 'lars':
             if exclude_bias_from_decay_params and exclude_bn_from_decay_params:
                 weight_decay_params = [tensor for name, tensor in model.named_parameters()
-                                       if 'bn' not in name and 'bias' not in name]
+                                    if 'bn' not in name and 'bias' not in name]
             elif exclude_bias_from_decay_params:
                 weight_decay_params = [tensor for name, tensor in model.named_parameters()
-                                       if 'bias' not in name]
+                                    if 'bias' not in name]
             elif exclude_bn_from_decay_params:
                 weight_decay_params = [tensor for name, tensor in model.named_parameters()
-                                       if 'bn' not in name]
+                                    if 'bn' not in name]
             else:
                 weight_decay_params = None
             optimizer = LARS(model.parameters(), lr=lr, weight_decay=weight_decay, weight_decay_params=weight_decay_params)
@@ -178,7 +111,7 @@ if __name__ == "__main__":
         def lr_schedule(step):
             num_samples = len(train_data)
             warmup_epochs = lr_warmup
-            num_steps_per_epoch = 50000 // batch_size
+            num_steps_per_epoch = num_samples // batch_size
             warmup_steps = num_steps_per_epoch * warmup_epochs
             total_steps = num_steps_per_epoch * epochs
             if step < warmup_steps:
@@ -194,6 +127,19 @@ if __name__ == "__main__":
     step = np.array([0])
     os.makedirs(save_dir, exist_ok=True)
     writer = SummaryWriter(save_dir, flush_secs=10)
+
+    query_hash, query_target = hash_utils.code_predict(model, query_loader)
+    gallery_hash, gallery_target = hash_utils.code_predict(model, gallery_loader)
+    code_and_label = {
+        "gallery_hash": gallery_hash.numpy(),
+        "gallery_target": gallery_target.numpy(),
+        "query_hash": query_hash.numpy(),
+        "query_target": query_target.numpy(),
+    }
+    mAP = hash_utils.mean_average_precision(code_and_label, R)
+    print(f"mAP: {mAP:.3f}")
+    writer.add_scalar('hashing/map', mAP, 0)
+
     for epoch in range(1, epochs + 1):
         if moco:
             train_loss = train_moco_symmetric(model, model_k, queue, queue_ptr,
@@ -203,33 +149,18 @@ if __name__ == "__main__":
         else:
             train_loss = train(model, train_loader, optimizer, temperature, objective, flip, scheduler, epoch, epochs)
         writer.add_scalar('pretraining/train_loss', train_loss, epoch)
-        if epoch == epochs:
+        if epoch == epochs or epoch % 100 == 0:
             torch.save(model.module.state_dict(), os.path.join(save_dir, f'last.pt'))
-            if moco:
-                torch.save(model_k.module.state_dict(), os.path.join(save_dir, f'momentum.pt'))
-            train_acc, test_acc = linear_eval(model,
-                                              linear_dim,
-                                              num_classes,
-                                              linear_train_loader,
-                                              linear_test_loader,
-                                              True,
-                                              1.0,
-                                              100,
-                                              batch_size)
-            print(f"FINAL LINEAR EVAL | epoch: {epoch}, train accuracy: {train_acc:.3f}, test accuracy: {test_acc:.3f}")
-            writer.add_scalar('linear_eval/final_test_accuracy', test_acc, epoch)
-        elif epoch % 10 == 0:
-            train_acc, test_acc = linear_eval(model,
-                                              linear_dim,
-                                              num_classes,
-                                              linear_train_loader,
-                                              linear_test_loader,
-                                              False,
-                                              1e-1,
-                                              10,
-                                              batch_size)
-            print(f"LINEAR EVAL | epoch: {epoch}, train accuracy: {train_acc:.3f}, test accuracy: {test_acc:.3f}")
-            writer.add_scalar('linear_eval/train_accuracy', train_acc, epoch)
-            writer.add_scalar('linear_eval/test_accuracy', test_acc, epoch)
+            query_hash, query_target = hash_utils.code_predict(model, query_loader)
+            gallery_hash, gallery_target = hash_utils.code_predict(model, gallery_loader)
+            code_and_label = {
+                "gallery_hash": gallery_hash.numpy(),
+                "gallery_target": gallery_target.numpy(),
+                "query_hash": query_hash.numpy(),
+                "query_target": query_target.numpy(),
+            }
+            mAP = hash_utils.mean_average_precision(code_and_label, R)
+            print(f"mAP: {mAP:.3f}")
+            writer.add_scalar('hashing/map', mAP, epoch)
 
     writer.flush()

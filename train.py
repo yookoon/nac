@@ -76,7 +76,8 @@ def train(net, data_loader, train_optimizer, temperature, objective, p, schedule
     return total_loss / total_num
 
 def train_moco_symmetric(net, net_k, queue, queue_ptr, data_loader, train_optimizer,
-                         temperature, objective, p, scheduler, moco_m, moco_K, epoch, epochs):
+                         temperature, objective, p, scheduler, moco_m, moco_K, l2_weight,
+                         epoch, epochs):
     net.train()
     net_k.train()
     n_batch = len(data_loader)
@@ -90,7 +91,7 @@ def train_moco_symmetric(net, net_k, queue, queue_ptr, data_loader, train_optimi
         feature_2, out_2, logit_2 = net(pos_2)
         idx_unshuffle = torch.argsort(idx_shuffle)
         feature_2, out_2, logit_2 = feature_2[idx_unshuffle], out_2[idx_unshuffle], logit_2[idx_unshuffle]
-        feature_1, out_1, logit_1 = net(pos_1, feature_2)
+        feature_1, out_1, logit_1 = net(pos_1)
 
         # Run momentum encoders
         with torch.no_grad():
@@ -100,7 +101,6 @@ def train_moco_symmetric(net, net_k, queue, queue_ptr, data_loader, train_optimi
 
         # Apply symmetric loss
         if objective == 'nac':
-            temperature =  1 / (np.log((1 - p) / p) / 2)
             _out_1, _out_2 = torch.tanh(out_1), torch.tanh(out_2)
             _out_k_1, _out_k_2 = torch.tanh(out_k_1), torch.tanh(out_k_2)
             out_k = torch.cat([_out_k_1, _out_k_2], dim=0)
@@ -114,7 +114,7 @@ def train_moco_symmetric(net, net_k, queue, queue_ptr, data_loader, train_optimi
             out_flip = m * out
 
             # [2B, K+2B]
-            log_sim_matrix = torch.mm(out_flip, keys) / temperature
+            log_sim_matrix = torch.mm(out_flip, keys) / (np.log((1 - p) / p) / 2)
 
             # q_1, q_2: [B, D]
             q_k_1, q_k_2 = logit_k_1.sigmoid(), logit_k_2.sigmoid()
@@ -126,6 +126,8 @@ def train_moco_symmetric(net, net_k, queue, queue_ptr, data_loader, train_optimi
             log_pos_sim = torch.cat([log_pos_sim1, log_pos_sim2], dim=0)
             loss = (- log_pos_sim
                     + torch.logsumexp(log_sim_matrix, dim=-1)).mean()
+            # L2 regularization on features
+            loss += l2_weight * torch.sum(out ** 2, dim=-1).mean()
             q_1, q_2 = logit_1.sigmoid(), logit_2.sigmoid()
             log_pos_sim1_VI = (torch.sum(out_flip[:batch_size].detach() * logit_2
                                     + torch.log(q_2 * (1 - q_2)) - np.log(1/4), dim=-1)) / 2

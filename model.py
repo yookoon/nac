@@ -44,7 +44,7 @@ class Model(nn.Module):
 
         if self.VI:
             if feature_moco is not None:
-                logit = self.prediction(feature_moco.detach())
+                logit = self.prediction(feature_moco)
             else:
                 logit = self.prediction(feature)
         else:
