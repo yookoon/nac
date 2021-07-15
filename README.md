@@ -12,14 +12,14 @@ pip install -r requirements.txt
 ```
 
 ## Linear Classification
-To train the model on CIFAR-10
+To train a ResNet-50 model on CIFAR-10
 ```
 python run.py --objective=nac --optimizer=lars --lr=3.0 --lr_warmup=10 batch_size=1000 epochs=1000 --weight_decay=1e-6 --flip=0.1
 ```
 We used 4 TITAN RTX GPUs in our experiments.
 
 ## Deep Hashing
-To train the model on CIFAR-10
+To train a VGG-16 model on CIFAR-10
 ```
 python run_hash.py --objective=nac --optimizer=lars --lr=3.0 --lr_warmup=10 batch_size=1000 epochs=1000 --weight_decay=1e-6 --flip=0.4
 ```
