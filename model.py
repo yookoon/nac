@@ -36,17 +36,14 @@ class Model(nn.Module):
                                             nn.ReLU(inplace=True),
                                             nn.Linear(out_dim, feature_dim, bias=True))
 
-    def forward(self, x, feature_moco=None):
+    def forward(self, x):
         x = self.encoder(x)
         feature = torch.flatten(x, start_dim=1)
         out = self.head(feature)
         linear = self.linear(out)
 
         if self.VI:
-            if feature_moco is not None:
-                logit = self.prediction(feature_moco)
-            else:
-                logit = self.prediction(feature)
+            logit = self.prediction(feature)
         else:
             logit = torch.zeros_like(feature)
 
