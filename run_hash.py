@@ -13,7 +13,6 @@ from torch.utils.tensorboard import SummaryWriter
 from model import Model
 from lars import LARS
 import hash_utils
-from hash import code_predict
 from train import train, train_moco_symmetric
 
 parser = argparse.ArgumentParser(description='Neural Activation Coding')
@@ -24,7 +23,7 @@ parser.add_argument('--lr_warmup', default=10, type=int, help='Learning rate war
 parser.add_argument('--feature_dim', default=128, type=int, help='Feature dim for latent vector')
 parser.add_argument('--temperature', default=0.5, type=float, help='Temperature for SimCLR')
 parser.add_argument('--batch_size', default=1000, type=int, help='Number of images in each mini-batch')
-parser.add_argument('--epochs', default=1000, type=int, help='Number of sweeps over the dataset to train')
+parser.add_argument('--epochs', default=2000, type=int, help='Number of sweeps over the dataset to train')
 parser.add_argument('--weight_decay', default=1e-6, type=float)
 parser.add_argument('--flip', default=0.1, type=float, help='Flip probability in the noisy channel')
 parser.add_argument('--exclude_bias_from_decay_params', action='store_true', default=False)
@@ -32,7 +31,7 @@ parser.add_argument('--exclude_bn_from_decay_params', action='store_true', defau
 parser.add_argument('--moco', action='store_true', help='Whether to use momentum queue')
 parser.add_argument('--K', default=5000, type=int, help='Size of momentum queue')
 parser.add_argument('--m', default=0.99, type=float, help='Momentum queue decay')
-parser.add_argument('--l2_weight', default=0.1, type=float, help='L2 regularization on the features')
+parser.add_argument('--l2_weight', default=0.0, type=float, help='L2 regularization on the features')
 
 
 if __name__ == "__main__":
@@ -58,7 +57,7 @@ if __name__ == "__main__":
         _args.append(f'K={K}.m={m}')
     if moco:
         _args.append(f'K={K}.m={m}')
-    save_dir = '.'.join(('hash', timestamp, *_args))
+    save_dir = '.'.join(('cifar/hash', timestamp, *_args))
 
     # data prepare
     train_data, query, gallery = hash_utils.get_cifar10pair_datasets('data', 10000, use_subset=True)
@@ -127,19 +126,6 @@ if __name__ == "__main__":
     step = np.array([0])
     os.makedirs(save_dir, exist_ok=True)
     writer = SummaryWriter(save_dir, flush_secs=10)
-
-    query_hash, query_target = hash_utils.code_predict(model, query_loader)
-    gallery_hash, gallery_target = hash_utils.code_predict(model, gallery_loader)
-    code_and_label = {
-        "gallery_hash": gallery_hash.numpy(),
-        "gallery_target": gallery_target.numpy(),
-        "query_hash": query_hash.numpy(),
-        "query_target": query_target.numpy(),
-    }
-    mAP = hash_utils.mean_average_precision(code_and_label, R)
-    print(f"mAP: {mAP:.3f}")
-    writer.add_scalar('hashing/map', mAP, 0)
-
     for epoch in range(1, epochs + 1):
         if moco:
             train_loss = train_moco_symmetric(model, model_k, queue, queue_ptr,

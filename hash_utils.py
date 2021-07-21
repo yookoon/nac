@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import torch
+import torch.nn.functional as F
 from torchvision import transforms
 from torchvision.datasets import CIFAR10
 from tqdm import tqdm
@@ -27,7 +28,7 @@ def code_predict(net, loader, num_classes=10):
             labels = torch.stack(labels, dim=1)
         images, labels = images.to(device), labels.to(device)
         labels = F.one_hot(labels, num_classes)
-        feature, middle, out, logit = net(images)
+        feature, out, logit = net(images)
         all_output.append(out.detach().cpu().float())
         all_label.append(labels.detach().cpu().float())
     all_output = torch.cat(all_output, 0)

@@ -178,7 +178,7 @@ if __name__ == "__main__":
         def lr_schedule(step):
             num_samples = len(train_data)
             warmup_epochs = lr_warmup
-            num_steps_per_epoch = 50000 // batch_size
+            num_steps_per_epoch = num_samples // batch_size
             warmup_steps = num_steps_per_epoch * warmup_epochs
             total_steps = num_steps_per_epoch * epochs
             if step < warmup_steps:

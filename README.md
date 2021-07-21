@@ -19,9 +19,9 @@ python run.py --objective=nac --optimizer=lars --lr=3.0 --lr_warmup=10 batch_siz
 We used 4 TITAN RTX GPUs in our experiments.
 
 ## Deep Hashing
-To train a VGG-16 model on CIFAR-10
+To train a VGG-16 model on the subset of CIFAR-10
 ```
-python run_hash.py --objective=nac --optimizer=lars --lr=3.0 --lr_warmup=10 batch_size=1000 epochs=1000 --weight_decay=1e-6 --flip=0.4
+python run_hash.py --objective=nac --optimizer=lars --lr=3.0 --lr_warmup=100 batch_size=1000 epochs=2000 --weight_decay=1e-6 --flip=0.4
 ```
 
 ## Acknowledgements
