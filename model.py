@@ -6,11 +6,11 @@ from torchvision.models.resnet import resnet50
 from torchvision.models import vgg16_bn
 
 class Model(nn.Module):
-    def __init__(self, feature_dim=128, VI=False, architecture='resnet50'):
+    def __init__(self, feature_dim=128, VI=False, architecture='resnet50', image_size=32):
         super(Model, self).__init__()
 
         # Modify the first conv layer according to SimCLR architecture
-        if architecture == 'resnet50':
+        if architecture == 'resnet50' and image_size == 32:
             f = []
             for name, module in resnet50().named_children():
                 if name == 'conv1':

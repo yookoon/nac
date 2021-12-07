@@ -17,6 +17,7 @@ from train import train, train_moco_symmetric
 
 parser = argparse.ArgumentParser(description='Neural Activation Coding')
 parser.add_argument('--objective', type=str, default='nac', choices=['nac', 'simclr'])
+parser.add_argument('--dataset', type=str, default='nac', choices=['cifar', 'flickr'])
 parser.add_argument('--optimizer', default='lars', type=str, help='Optimizer to use')
 parser.add_argument('--lr', default=3.0, type=float, help='Learning rate')
 parser.add_argument('--lr_warmup', default=10, type=int, help='Learning rate warmup epochs')
@@ -60,14 +61,24 @@ if __name__ == "__main__":
     save_dir = '.'.join(('cifar/hash', timestamp, *_args))
 
     # data prepare
-    train_data, query, gallery = hash_utils.get_cifar10pair_datasets('data', 10000, use_subset=True)
-    print(len(train_data), len(query), len(gallery))
-    n_gallery = len(gallery)
+    if args.dataset == 'cifar':
+        train_data, query, gallery = hash_utils.get_cifar10pair_datasets('data', 10000, use_subset=True)
+        print(len(train_data), len(query), len(gallery))
+        n_gallery = len(gallery)
+        R = n_gallery
+        num_classes = 10
+        multi_label = False
+    elif args.dataset == 'flickr':
+        train_data, query, gallery = hash_utils.get_flickr25kpair_datasets('data/mirflickr', 'data/mirflickr_annotations', 224, 2000, 5000)
+        print(len(train_data), len(query), len(gallery))
+        n_gallery = len(gallery)
+        R = n_gallery
+        num_classes = 24
+        multi_label = True
+
     query_loader = DataLoader(query, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
     gallery_loader = DataLoader(gallery, batch_size=batch_size, shuffle=False, num_workers=16, pin_memory=True)
     train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=16, pin_memory=True, drop_last=True)
-    R = n_gallery
-    num_classes = 10
 
     # model setup and optimizer config
     model = Model(feature_dim=feature_dim, VI=VI, architecture='vgg16').cuda()
@@ -137,8 +148,8 @@ if __name__ == "__main__":
         writer.add_scalar('pretraining/train_loss', train_loss, epoch)
         if epoch == epochs or epoch % 100 == 0:
             torch.save(model.module.state_dict(), os.path.join(save_dir, f'last.pt'))
-            query_hash, query_target = hash_utils.code_predict(model, query_loader)
-            gallery_hash, gallery_target = hash_utils.code_predict(model, gallery_loader)
+            query_hash, query_target = hash_utils.code_predict(model, query_loader, multi_label=multi_label)
+            gallery_hash, gallery_target = hash_utils.code_predict(model, gallery_loader, multi_label=multi_label)
             code_and_label = {
                 "gallery_hash": gallery_hash.numpy(),
                 "gallery_target": gallery_target.numpy(),
